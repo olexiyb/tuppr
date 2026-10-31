@@ -65,7 +65,11 @@ cluster a pull secret.
   skip). They merge cleanly; #682's reset cleanup also covers pre-batch Jobs.
 - **#681 and #683** both change the `spec.healthChecks` block in
   `processNextBatch` (#683 moves it into `waitForHealthChecks`). Resolved here
-  by keeping #681's skip rule around #683's call.
+  by keeping #681's skip rule around #683's call. #683 also does the
+  conflict-free part for them: #668, #669 and #681 together push
+  `processNextBatch` over the gocyclo limit (31 > 30), and #683's move brings
+  it back under. If #668 and #681 both merge upstream before #683, the second
+  of them needs a similar split.
 - **#669** needs a rebase and force-push to the fork once #668 merges.
 
 ## Fork-only commits
