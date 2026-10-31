@@ -11,7 +11,7 @@
 set -euo pipefail
 
 # Merge order. #669's branch is stacked on #668, so it brings both.
-PRS=(669 671 672 681 682)
+PRS=(669 671 672 681 682 683)
 UPSTREAM=home-operations/tuppr
 BRANCH=integration
 
