@@ -40,14 +40,15 @@ cluster a pull secret.
 
 ## Open upstream PRs
 
-| PR   | Branch                               | Change                                                                                                                                                                                                                                          |
-| ---- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #668 | `feat/node-ready-etcd-gate`          | Built-in cluster health gate before every batch and before completion: Node `Ready`, Talos `MachineStatus` running/ready, etcd one voting member per control-plane node, none a learner, all with a leader.                                     |
-| #669 | `feat/serialize-control-plane`       | Stacked on #668. A batch is one control-plane node or up to `parallelism` workers; cross-plan wait on other control-plane upgrades; webhook warnings for `force`/`stage` on 1.13+, two control-plane nodes, parallelism above the worker count. |
-| #671 | `fix/rebooting-node-verify-errors`   | A rebooting node whose Job is gone keeps waiting on verify errors (e.g. Talos 1.14 `PermissionDenied` window) until the reboot deadline, like the Job path.                                                                                     |
-| #672 | `feat/talos-upgrade-path-validation` | Webhook checks each selected node's Talos upgrade path and Kubernetes support with machinery's `compatibility` tables; warns on downgrades and targets outside the tables.                                                                      |
-| #681 | `feat/pre-batch-hooks`               | `spec.hooks.preBatch` (#630): hook Jobs before every batch with `TUPPR_NODES`, retried until `preBatchRetry.timeout`; health checks gate every attempt; state in `status.preBatchHooks`.                                                        |
-| #682 | `fix/post-hooks-after-failed-batch`  | A failed batch runs the post-hooks before `Failed`; reset or spec change deletes the run's hook Jobs; "Upgrade stopped after failures" message.                                                                                                 |
+| PR   | Branch                               | Change                                                                                                                                                                                                                                                                                         |
+| ---- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #668 | `feat/node-ready-etcd-gate`          | Built-in cluster health gate before every batch and before completion: Node `Ready`, Talos `MachineStatus` running/ready, etcd one voting member per control-plane node, none a learner, all with a leader.                                                                                    |
+| #669 | `feat/serialize-control-plane`       | Stacked on #668. A batch is one control-plane node or up to `parallelism` workers; cross-plan wait on other control-plane upgrades; webhook warnings for `force`/`stage` on 1.13+, two control-plane nodes, parallelism above the worker count.                                                |
+| #671 | `fix/rebooting-node-verify-errors`   | A rebooting node whose Job is gone keeps waiting on verify errors (e.g. Talos 1.14 `PermissionDenied` window) until the reboot deadline, like the Job path.                                                                                                                                    |
+| #672 | `feat/talos-upgrade-path-validation` | Webhook checks each selected node's Talos upgrade path and Kubernetes support with machinery's `compatibility` tables; warns on downgrades and targets outside the tables.                                                                                                                     |
+| #681 | `feat/pre-batch-hooks`               | `spec.hooks.preBatch` (#630): hook Jobs before every batch with `TUPPR_NODES`, retried until `preBatchRetry.timeout`; health checks gate every attempt; state in `status.preBatchHooks`.                                                                                                       |
+| #682 | `fix/post-hooks-after-failed-batch`  | A failed batch runs the post-hooks before `Failed`; reset or spec change deletes the run's hook Jobs; "Upgrade stopped after failures" message.                                                                                                                                                |
+| #683 | `fix/health-checks-nonblocking`      | `CheckHealth` evaluates once per reconcile (10s per check) instead of blocking the worker up to 10m+; requeue backs off 30s→5m from `status.healthChecksFailingSince`; `HealthChecksFailed` only on change; duration metric is time-to-pass; `timeout` has no effect (webhook warns when set). |
 
 ### How they interact
 
@@ -62,6 +63,9 @@ cluster a pull secret.
 - **#681 and #682** both edit `hooks.go` and `hooks_test.go` (#681 adds
   pre-batch helpers, #682 adds `deleteHookJobs` and the `DeletionTimestamp`
   skip). They merge cleanly; #682's reset cleanup also covers pre-batch Jobs.
+- **#681 and #683** both change the `spec.healthChecks` block in
+  `processNextBatch` (#683 moves it into `waitForHealthChecks`). Resolved here
+  by keeping #681's skip rule around #683's call.
 - **#669** needs a rebase and force-push to the fork once #668 merges.
 
 ## Fork-only commits
@@ -98,12 +102,10 @@ cluster a pull secret.
 
 Ranked by how much damage each can do.
 
-1. **Health checks block the reconcile worker.** `CheckHealth` polls up to
-   `DefaultHealthCheckTimeout` (10m) inside one reconcile. #681 runs the checks
-   before every pre-batch hook attempt, so a failing check during a long
-   resync can hold the shared worker for minutes at a time and stall every
-   other TalosUpgrade/KubernetesUpgrade. Fix: evaluate once per reconcile and
-   requeue.
+1. **Pre-pull blocks the reconcile worker.** #683 fixed the health checks;
+   `prePullInstallerImages` still pulls one node after another, up to 10m
+   per node, inside a reconcile. The drain loop and the 2m volume-detach
+   wait block too, but for less time.
 2. **Upgrade-path check before cordon, in the controller.** #672 checks at
    admission only; a version annotation, a relabel into the selector, or a new
    node after admission aren't re-checked. Talos's installer still refuses a
