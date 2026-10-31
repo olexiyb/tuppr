@@ -71,15 +71,13 @@ cluster a pull secret.
   it back under. If #668 and #681 both merge upstream before #683, the second
   of them needs a similar split.
 - **#669** needs a rebase and force-push to the fork once #668 merges.
+- **#672** adds `github.com/blang/semver/v4` as a direct dependency on a
+  `go.mod` older than upstream's 0.5.11 bumps; the rebuild resolves it by
+  keeping upstream's versions plus the semver line, then `go mod tidy`.
 
 ## Fork-only commits
 
 - `fix(webhook): restore the labels import #669 needs after #672`: see above.
-- `chore(deps): update golang.org/x/net to v0.62.0`: fixes GO-2026-6860
-  (quadratic `html.Parse`, reached through the Apprise notifier), which fails
-  upstream's `Go Vulncheck` since it was published. Pulls newer `x/crypto`,
-  `x/sync`, `x/sys`, `x/term`, `x/text`, `x/tools`. Drops out once upstream
-  bumps it.
 - `ci: build the integration branch image`.
 - This file and the rebuild script.
 
