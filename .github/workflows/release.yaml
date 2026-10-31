@@ -6,6 +6,9 @@ on:
   push:
     branches:
       - main
+      # Fork only: builds ghcr.io/olexiyb/tuppr:integration from the branch
+      # that merges every open PR (see FORK-NOTES.md). Never upstream.
+      - integration
     paths-ignore:
       - "**.md"
   release:
