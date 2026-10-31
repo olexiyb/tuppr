@@ -298,7 +298,7 @@ func (r *Reconciler) completeUpgrade(ctx context.Context, talosUpgrade *tupprv1a
 			strings.Join(talosUpgrade.Status.PreBatchHooks.Nodes, ", "), completedCount, failedCount)
 	case failedCount > 0:
 		phase = tupprv1alpha1.JobPhaseFailed
-		message = fmt.Sprintf("Completed with failures: %d successful, %d failed", completedCount, failedCount)
+		message = fmt.Sprintf("Upgrade stopped after failures: %d successful, %d failed", completedCount, failedCount)
 	default:
 		phase = tupprv1alpha1.JobPhaseCompleted
 		message = fmt.Sprintf("Successfully upgraded %d nodes", completedCount)
