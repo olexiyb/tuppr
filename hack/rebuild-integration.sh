@@ -10,8 +10,8 @@
 #   git push --force-with-lease fork integration
 set -euo pipefail
 
-# Merge order. #669's branch is stacked on #668, so it brings both.
-PRS=(669 671 672 681 682 683)
+# Merge order.
+PRS=(671 681 682)
 UPSTREAM=home-operations/tuppr
 BRANCH=integration
 
