@@ -29,6 +29,19 @@ empty because upstream now has the change). `rerere` is enabled, so a conflict
 resolved once is replayed on every rebuild; a new conflict stops the script
 for a manual resolution.
 
+After upstream merges one of these PRs (especially with maintainer changes on
+top), the recorded resolutions are against the old branch, not the merged
+code. Rebuild once with rerere off and check each resolution by hand:
+
+```bash
+sed -e '/git config rerere/d' hack/rebuild-integration.sh > /tmp/rebuild.sh
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=rerere.enabled GIT_CONFIG_VALUE_0=false \
+  mise exec -- bash /tmp/rebuild.sh
+```
+
+A `(fork only)` fix that upstream made obsolete may still apply cleanly but
+break the build; drop it with `git rebase --onto <commit>^ <commit>`.
+
 ## Image
 
 Every push to `integration` builds and signs
@@ -40,44 +53,29 @@ cluster a pull secret.
 
 ## Open upstream PRs
 
-| PR   | Branch                               | Change                                                                                                                                                                                                                                                                                         |
-| ---- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #668 | `feat/node-ready-etcd-gate`          | Built-in cluster health gate before every batch and before completion: Node `Ready`, Talos `MachineStatus` running/ready, etcd one voting member per control-plane node, none a learner, all with a leader.                                                                                    |
-| #669 | `feat/serialize-control-plane`       | Stacked on #668. A batch is one control-plane node or up to `parallelism` workers; cross-plan wait on other control-plane upgrades; webhook warnings for `force`/`stage` on 1.13+, two control-plane nodes, parallelism above the worker count.                                                |
-| #671 | `fix/rebooting-node-verify-errors`   | A rebooting node whose Job is gone keeps waiting on verify errors (e.g. Talos 1.14 `PermissionDenied` window) until the reboot deadline, like the Job path.                                                                                                                                    |
-| #672 | `feat/talos-upgrade-path-validation` | Webhook checks each selected node's Talos upgrade path and Kubernetes support with machinery's `compatibility` tables; warns on downgrades and targets outside the tables.                                                                                                                     |
-| #681 | `feat/pre-batch-hooks`               | `spec.hooks.preBatch` (#630): hook Jobs before every batch with `TUPPR_NODES`, retried until `preBatchRetry.timeout`; health checks gate every attempt; state in `status.preBatchHooks`.                                                                                                       |
-| #682 | `fix/post-hooks-after-failed-batch`  | A failed batch runs the post-hooks before `Failed`; reset or spec change deletes the run's hook Jobs; "Upgrade stopped after failures" message.                                                                                                                                                |
-| #683 | `fix/health-checks-nonblocking`      | `CheckHealth` evaluates once per reconcile (10s per check) instead of blocking the worker up to 10m+; requeue backs off 30s→5m from `status.healthChecksFailingSince`; `HealthChecksFailed` only on change; duration metric is time-to-pass; `timeout` has no effect (webhook warns when set). |
+| PR   | Branch                              | Change                                                                                                                                                                                                               |
+| ---- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #671 | `fix/rebooting-node-verify-errors`  | A rebooting node whose Job is gone keeps waiting on verify errors (e.g. Talos 1.14 `PermissionDenied` window) until the reboot deadline, like the Job path.                                                          |
+| #681 | `feat/pre-batch-hooks`              | `spec.hooks.preBatch` (#630): hook Jobs before every batch with `TUPPR_NODES`, retried until `preBatchRetry.timeout` (the deadline holds while other gates hold the run); state in `status.preBatchHooks`. Approved. |
+| #682 | `fix/post-hooks-after-failed-batch` | A failed batch runs the post-hooks before `Failed`; reset or spec change deletes the run's hook Jobs; "Upgrade stopped after failures" message.                                                                      |
+
+Merged upstream (2026-11-03/04, with maintainer fixes on top; see each PR's
+comments): #668 cluster health gate, #669 control-plane serialization, #672
+upgrade-path validation, #683 non-blocking health checks.
 
 ### How they interact
 
-- **#668 and #681** both change `processNextBatch`. Resolved here as: cluster
-  health gate first, always; then the pre-batch stage, `spec.healthChecks`,
-  pre-hooks, pre-batch hooks, drain. Whichever PR merges second needs the same
-  resolution.
-- **#669 and #672** both edit `internal/webhook/talosupgrade/webhook.go`. #672
-  removed the `labels` import that #669's `countSelectedWorkers` uses; the
-  `(fork only)` fix restores it. The PR merged second should make
-  `countSelectedWorkers` use #672's `listSelectedNodes` instead.
+- **#681 on `main`:** rebased onto the merged #668, #669 and #683. In
+  `processNextBatch`: choose the batch, resume a started one, wait for the
+  control-plane slot (#669), check images, the cluster health gate (#668),
+  then the pre-batch stage decides whether `spec.healthChecks` run (#683),
+  then pre-hooks, pre-batch hooks, drain.
 - **#681 and #682** both edit `hooks.go` and `hooks_test.go` (#681 adds
   pre-batch helpers, #682 adds `deleteHookJobs` and the `DeletionTimestamp`
   skip). They merge cleanly; #682's reset cleanup also covers pre-batch Jobs.
-- **#681 and #683** both change the `spec.healthChecks` block in
-  `processNextBatch` (#683 moves it into `waitForHealthChecks`). Resolved here
-  by keeping #681's skip rule around #683's call. #683 also does the
-  conflict-free part for them: #668, #669 and #681 together push
-  `processNextBatch` over the gocyclo limit (31 > 30), and #683's move brings
-  it back under. If #668 and #681 both merge upstream before #683, the second
-  of them needs a similar split.
-- **#669** needs a rebase and force-push to the fork once #668 merges.
-- **#672** adds `github.com/blang/semver/v4` as a direct dependency on a
-  `go.mod` older than upstream's 0.5.11 bumps; the rebuild resolves it by
-  keeping upstream's versions plus the semver line, then `go mod tidy`.
 
 ## Fork-only commits
 
-- `fix(webhook): restore the labels import #669 needs after #672`: see above.
 - `ci: build the integration branch image`.
 - This file and the rebuild script.
 
@@ -107,7 +105,8 @@ Ranked by how much damage each can do.
 1. **Pre-pull blocks the reconcile worker.** #683 fixed the health checks;
    `prePullInstallerImages` still pulls one node after another, up to 10m
    per node, inside a reconcile. The drain loop and the 2m volume-detach
-   wait block too, but for less time.
+   wait block too, but for less time. The maintainer also noted that
+   `processNextBatch` checks the maintenance window before this slow work.
 2. **Upgrade-path check before cordon, in the controller.** #672 checks at
    admission only; a version annotation, a relabel into the selector, or a new
    node after admission aren't re-checked. Talos's installer still refuses a
@@ -116,7 +115,9 @@ Ranked by how much damage each can do.
    cordon.
 3. **A lock between plans (coordination `Lease`).** Closes the race #669
    documents: two plans selecting different control-plane nodes passing the
-   cross-plan check within milliseconds.
+   cross-plan check within milliseconds. Next to it: an `upgrading` label left
+   by a deleted plan still holds other plans' control-plane batches; storing
+   the plan name as the label value would let tuppr remove it safely.
 4. **Rollback detection.** When a new image fails to boot and Talos rolls
    back, the run waits the full reboot deadline (30m) and reports "did not
    become ready" instead of "rolled back". Reporting only; the run still stops.
